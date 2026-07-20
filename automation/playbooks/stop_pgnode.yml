@@ -1,5 +1,5 @@
 ---
-- name: vitabaks.autobase.switchover_pgcluster | Switchover PostgreSQL Cluster
+- name: vitabaks.autobase.stop_pgnode | Stop PostgreSQL Cluster node
   hosts: postgres_cluster
   gather_facts: true
   become: true
@@ -21,6 +21,26 @@
       ansible.builtin.import_role:
         name: vitabaks.autobase.common
 
+    - name: Require Patroni stop node name
+      ansible.builtin.assert:
+        that: patroni_stop_node_name | default('') | length > 0
+        fail_msg: >-
+          Set patroni_stop_node_name to the Patroni node name to stop.
+      when: inventory_hostname == groups['postgres_cluster'][0]
+
+    - name: Validate Patroni stop node exists
+      ansible.builtin.assert:
+        that: >-
+          patroni_stop_node_name | default('') in
+          (groups.get('postgres_cluster', [])
+          | map('extract', hostvars)
+          | map(attribute='ansible_hostname')
+          | list)
+        fail_msg: >-
+          Patroni stop node '{{ patroni_stop_node_name | default('') }}' was not found in cluster
+          '{{ patroni_cluster_name | default('postgres-cluster') }}'.
+      when: inventory_hostname == groups['postgres_cluster'][0]
+
     - name: "[Prepare] Get Patroni Cluster Leader Node"
       ansible.builtin.uri:
         url: >-
@@ -29,7 +49,7 @@
             | default('8008') }}/leader
         status_code: 200
         ca_path: "{{ patroni_restapi_cafile | default(omit, true) }}"
-      register: switchover_patroni_leader_result
+      register: stop_node_patroni_leader_result
       changed_when: false
       failed_when: false
       check_mode: false
@@ -46,8 +66,8 @@
       ansible.builtin.set_fact:
         leader_result: >-
           {{
-            switchover_patroni_leader_result
-            if switchover_patroni_leader_result.status is defined
+            stop_node_patroni_leader_result
+            if stop_node_patroni_leader_result.status is defined
             else patroni_leader_result | default({})
           }}
       changed_when: false
@@ -89,15 +109,6 @@
       changed_when: false
       check_mode: false
 
-    - name: Print Patroni Cluster info
-      ansible.builtin.debug:
-        msg:
-          - "Cluster Name: {{ patroni_cluster_name | default('postgres-cluster') }}"
-          - "Cluster Leader: {{ ansible_hostname }}"
-      when:
-        - groups.get('primary', []) | length > 0
-        - inventory_hostname in groups['primary']
-
     - name: Get current Patroni passwords
       ansible.builtin.import_role:
         name: vitabaks.autobase.pre_checks
@@ -107,28 +118,8 @@
         postgresql_cluster_maintenance: true
       when: patroni_superuser_password | default('') | length < 1
 
-- name: vitabaks.autobase.switchover_pgcluster | Switchover Patroni leader
-  hosts: primary
-  gather_facts: false
-  become: true
-  become_method: sudo
-  any_errors_fatal: true
-  tasks:
-    - name: Validate Patroni switchover candidate
-      ansible.builtin.assert:
-        that: >-
-          patroni_switchover_candidate_name in
-          (groups.get('secondary', [])
-          | map('extract', hostvars)
-          | map(attribute='ansible_hostname')
-          | list)
-        fail_msg: >-
-          Switchover candidate '{{ patroni_switchover_candidate_name | default('') }}' is not a Patroni replica in cluster
-          '{{ patroni_cluster_name | default('postgres-cluster') }}'.
-      when: patroni_switchover_candidate_name | default('') | length > 0
-
-    - name: Switchover Patroni leader role
+    - name: Stop services on the selected node
       ansible.builtin.import_role:
-        name: vitabaks.autobase.patroni
-        tasks_from: switchover
-      when: groups.get('secondary', []) | length > 0
+        name: vitabaks.autobase.update
+        tasks_from: stop_services
+      when: ansible_hostname == patroni_stop_node_name | default('')
