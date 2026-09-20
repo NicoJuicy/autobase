@@ -313,6 +313,9 @@ postgresql_users:
 #  - { name: "", password: "", flags: "NOSUPERUSER" }
 #  - { name: "", password: "", flags: "NOLOGIN" }
 
+# Generate missing passwords: "disabled" never, "on_create" only for new users, or "always" on every run.
+postgresql_users_password_generation: "disabled"
+
 # List of databases to be created
 postgresql_databases: []
 #  - { db: "mydatabase", encoding: "UTF8", lc_collate: "ru_RU.UTF-8", lc_ctype: "ru_RU.UTF-8", owner: "mydb-user" }
